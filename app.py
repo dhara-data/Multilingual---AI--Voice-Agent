@@ -1,8 +1,8 @@
 import streamlit as st
-import ollama
 import speech_recognition as sr
-import io
 import hashlib
+import io
+from groq import Groq
 
 # ---------------- PAGE SETTINGS ----------------
 
@@ -12,210 +12,207 @@ st.set_page_config(
     layout="centered"
 )
 
-# ---------------- TITLE ----------------
-
 st.title("🎙️ Multilingual AI Voice Assistant")
 st.subheader("Your Personal AI Assistant")
 
 st.write(
-    "Ask me anything about studies, coding, AI, business, "
+    "Ask questions about studies, coding, AI, business, "
     "technology, shopping, career, or everyday life."
 )
 
-# ---------------- SESSION STATE ----------------
+# ---------------- API CONNECTION ----------------
+
+try:
+    groq_client = Groq(
+        api_key=st.secrets["GROQ_API_KEY"]
+    )
+except Exception:
+    st.error("Groq API key is missing. Please add it in Streamlit Secrets.")
+    st.stop()
+
+# ---------------- LANGUAGE ----------------
+
+language = st.selectbox(
+    "Choose your language:",
+    ["English", "Hindi", "Gujarati"]
+)
+
+language_codes = {
+    "English": "en-IN",
+    "Hindi": "hi-IN",
+    "Gujarati": "gu-IN"
+}
+
+# ---------------- CHAT HISTORY ----------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "processed_audio" not in st.session_state:
-    st.session_state.processed_audio = None
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
-if "voice_question" not in st.session_state:
-    st.session_state.voice_question = None
-
-# ---------------- SETTINGS ----------------
-
-language = st.selectbox(
-    "🌐 Choose your language",
-    ["English", "Hindi", "Gujarati"]
-)
-
-model_name = st.text_input(
-    "🤖 Ollama Model",
-    value="qwen2.5:3b"
-)
+# ---------------- CLEAR CHAT ----------------
 
 if st.button("🗑️ Clear Chat"):
     st.session_state.messages = []
-    st.session_state.voice_question = None
-    st.session_state.processed_audio = None
+    st.session_state.last_audio_hash = None
     st.rerun()
 
-# ---------------- LANGUAGE INSTRUCTION ----------------
-
-if language == "English":
-    language_instruction = "Reply in English."
-
-elif language == "Hindi":
-    language_instruction = "Reply in Hindi."
-
-else:
-    language_instruction = "Reply in Gujarati."
-
-# ---------------- SYSTEM PROMPT ----------------
-
-system_prompt = f"""
-You are a helpful multilingual AI assistant.
-
-You can answer questions about:
-Education, Python, AI, Data Science, Machine Learning,
-Technology, Business, Shopping, Finance, Career,
-General Knowledge and everyday life.
-
-Do not restrict yourself to one topic.
-
-{language_instruction}
-
-Keep answers clear, useful and easy to understand.
-Avoid unnecessary long answers unless the user requests detail.
-For coding questions, provide working code.
-"""
-
-# ---------------- DISPLAY CHAT HISTORY ----------------
+# ---------------- DISPLAY CHAT ----------------
 
 for message in st.session_state.messages:
-
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ---------------- VOICE INPUT ----------------
+# ---------------- AI RESPONSE FUNCTION ----------------
 
-st.subheader("🎤 Voice Input")
+def get_ai_response(user_message):
 
-audio = st.audio_input("Record your question")
+    system_prompt = f"""
+    You are a helpful multilingual AI voice assistant.
 
-if audio is not None:
+    Respond in {language}.
 
-    audio_bytes = audio.getvalue()
+    You can help with:
+    - Education and studies
+    - Python programming and coding
+    - Artificial Intelligence
+    - Data Science and Data Analysis
+    - Business and technology
+    - Shopping
+    - Career guidance
+    - Finance
+    - General knowledge
+    - Everyday questions
 
-    audio_hash = hashlib.md5(audio_bytes).hexdigest()
+    Give clear, useful and easy-to-understand answers.
+    If the user asks in Hindi, respond in Hindi.
+    If the user asks in Gujarati, respond in Gujarati.
+    Keep answers reasonably concise.
+    """
 
-    # Process audio only once
-    if audio_hash != st.session_state.processed_audio:
+    recent_messages = st.session_state.messages[-8:]
 
-        st.session_state.processed_audio = audio_hash
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt
+        }
+    ]
 
-        try:
+    messages.extend(recent_messages)
 
-            recognizer = sr.Recognizer()
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            temperature=0.3,
+            max_completion_tokens=500
+        )
 
-            audio_file = sr.AudioFile(
-                io.BytesIO(audio_bytes)
-            )
+        return response.choices[0].message.content
 
-            with audio_file as source:
-                audio_data = recognizer.record(source)
+    except Exception as e:
+        return f"Error connecting to AI: {e}"
 
-            if language == "English":
-                speech_language = "en-IN"
+# ---------------- TEXT CHAT ----------------
 
-            elif language == "Hindi":
-                speech_language = "hi-IN"
+user_input = st.chat_input("Type your question here...")
 
-            else:
-                speech_language = "gu-IN"
+if user_input:
 
-            with st.spinner("🎤 Understanding your voice..."):
-
-                recognized_text = recognizer.recognize_google(
-                    audio_data,
-                    language=speech_language
-                )
-
-            st.success("Voice recognized!")
-
-            st.write("Your question:")
-            st.write(recognized_text)
-
-            st.session_state.voice_question = recognized_text
-
-        except sr.UnknownValueError:
-
-            st.error("Sorry, I couldn't understand your voice.")
-
-        except sr.RequestError:
-
-            st.error("Speech recognition service is unavailable.")
-
-        except Exception as e:
-
-            st.error(f"Voice error: {e}")
-
-# ---------------- TEXT INPUT ----------------
-
-question = st.chat_input("Ask me anything...")
-
-# Use voice question if available
-if st.session_state.voice_question:
-
-    question = st.session_state.voice_question
-
-    st.session_state.voice_question = None
-
-# ---------------- AI RESPONSE ----------------
-
-if question:
-
-    # Save user message
-    st.session_state.messages.append({
-        "role": "user",
-        "content": question
-    })
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": user_input
+        }
+    )
 
     with st.chat_message("user"):
-        st.markdown(question)
-
-    # Keep only recent messages to reduce processing
-    recent_messages = st.session_state.messages[-8:]
+        st.markdown(user_input)
 
     with st.chat_message("assistant"):
 
-        with st.spinner("🤖 AI is thinking..."):
+        with st.spinner("AI is thinking..."):
+            answer = get_ai_response(user_input)
 
-            try:
+        st.markdown(answer)
 
-                response = ollama.chat(
-                    model=model_name,
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": answer
+        }
+    )
 
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt
-                        }
-                    ] + recent_messages,
+# ---------------- VOICE INPUT ----------------
 
-                    options={
-                        "temperature": 0.3,
-                        "num_predict": 256
-                    }
+st.divider()
+
+st.subheader("🎤 Speak to your AI Assistant")
+
+audio_file = st.audio_input("Record your question")
+
+if audio_file:
+
+    audio_bytes = audio_file.getvalue()
+
+    audio_hash = hashlib.md5(audio_bytes).hexdigest()
+
+    if audio_hash != st.session_state.last_audio_hash:
+
+        st.session_state.last_audio_hash = audio_hash
+
+        recognizer = sr.Recognizer()
+
+        try:
+
+            audio_data = sr.AudioFile(
+                io.BytesIO(audio_bytes)
+            )
+
+            with audio_data as source:
+                audio = recognizer.record(source)
+
+            with st.spinner("Listening and converting speech to text..."):
+
+                spoken_text = recognizer.recognize_google(
+                    audio,
+                    language=language_codes[language]
                 )
 
-                answer = response["message"]["content"]
+            st.success("Speech recognized successfully!")
+
+            st.write("*You said:*")
+            st.write(spoken_text)
+
+            st.session_state.messages.append(
+                {
+                    "role": "user",
+                    "content": spoken_text
+                }
+            )
+
+            with st.chat_message("assistant"):
+
+                with st.spinner("AI is thinking..."):
+
+                    answer = get_ai_response(spoken_text)
 
                 st.markdown(answer)
 
-                # Save AI response
-                st.session_state.messages.append({
+            st.session_state.messages.append(
+                {
                     "role": "assistant",
                     "content": answer
-                })
+                }
+            )
 
-            except Exception as e:
+        except sr.UnknownValueError:
+            st.error("Sorry, I could not understand your voice. Please try again.")
 
-                st.error(
-                    "Unable to connect to Ollama. "
-                    "Check whether Ollama is running "
-                    "and whether the selected model is installed."
-                )
+        except sr.RequestError:
+            st.error("Speech recognition service is unavailable. Please try again.")
 
-                st.code(str(e))
+        except Exception as e:
+            st.error(f"Voice error: {e}")
