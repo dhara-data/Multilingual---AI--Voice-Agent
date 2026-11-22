@@ -2,6 +2,7 @@ import streamlit as st
 import ollama
 import speech_recognition as sr
 import io
+import hashlib
 
 # ---------------- PAGE SETTINGS ----------------
 
@@ -17,79 +18,74 @@ st.title("🎙️ Multilingual AI Voice Assistant")
 st.subheader("Your Personal AI Assistant")
 
 st.write(
-    "Ask me anything! I can help with studies, coding, AI, business, technology, shopping, and more."
+    "Ask me anything about studies, coding, AI, business, "
+    "technology, shopping, career, or everyday life."
 )
 
-# ---------------- SIDEBAR ----------------
-
-
-# ---------------- MAIN PAGE SETTINGS ----------------
-
-language = st.selectbox(
-"🌐 Choose your language",
-["English", "Hindi", "Gujarati"]
-)
-
-model_name = st.text_input(
-    "🤖 Ollama Model",
-    value="phi3"
-)
-
-if st.button("🗑️ Clear Chat"):
-    st.session_state.messages = []
-    st.rerun()
-
-# ---------------- LANGUAGE SETTINGS ----------------
-
-if language == "English":
-    language_instruction = "Answer in English."
-
-elif language == "Hindi":
-    language_instruction = "Answer in Hindi."
-
-else:
-    language_instruction = "Answer in Gujarati."
-
-# ---------------- AI INSTRUCTIONS ----------------
-
-system_prompt = f"""
-You are a helpful multilingual AI assistant.
-
-You can answer questions about any topic, including:
-
-- Education and studies
-- Python programming
-- Artificial Intelligence
-- Data Science
-- Machine Learning
-- Technology
-- Business
-- Shopping
-- Finance
-- General knowledge
-- Career guidance
-- Everyday questions
-
-Do not restrict yourself to shopping questions.
-
-{language_instruction}
-
-Explain answers clearly and simply.
-If the user asks for code, provide working code and explain it.
-Be friendly, helpful, and accurate.
-"""
-
-# ---------------- CHAT HISTORY ----------------
+# ---------------- SESSION STATE ----------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display previous messages
+if "processed_audio" not in st.session_state:
+    st.session_state.processed_audio = None
+
+if "voice_question" not in st.session_state:
+    st.session_state.voice_question = None
+
+# ---------------- SETTINGS ----------------
+
+language = st.selectbox(
+    "🌐 Choose your language",
+    ["English", "Hindi", "Gujarati"]
+)
+
+model_name = st.text_input(
+    "🤖 Ollama Model",
+    value="qwen2.5:3b"
+)
+
+if st.button("🗑️ Clear Chat"):
+    st.session_state.messages = []
+    st.session_state.voice_question = None
+    st.session_state.processed_audio = None
+    st.rerun()
+
+# ---------------- LANGUAGE INSTRUCTION ----------------
+
+if language == "English":
+    language_instruction = "Reply in English."
+
+elif language == "Hindi":
+    language_instruction = "Reply in Hindi."
+
+else:
+    language_instruction = "Reply in Gujarati."
+
+# ---------------- SYSTEM PROMPT ----------------
+
+system_prompt = f"""
+You are a helpful multilingual AI assistant.
+
+You can answer questions about:
+Education, Python, AI, Data Science, Machine Learning,
+Technology, Business, Shopping, Finance, Career,
+General Knowledge and everyday life.
+
+Do not restrict yourself to one topic.
+
+{language_instruction}
+
+Keep answers clear, useful and easy to understand.
+Avoid unnecessary long answers unless the user requests detail.
+For coding questions, provide working code.
+"""
+
+# ---------------- DISPLAY CHAT HISTORY ----------------
 
 for message in st.session_state.messages:
 
     with st.chat_message(message["role"]):
-
         st.markdown(message["content"])
 
 # ---------------- VOICE INPUT ----------------
@@ -100,83 +96,87 @@ audio = st.audio_input("Record your question")
 
 if audio is not None:
 
-    try:
+    audio_bytes = audio.getvalue()
 
-        recognizer = sr.Recognizer()
+    audio_hash = hashlib.md5(audio_bytes).hexdigest()
 
-        audio_file = sr.AudioFile(
-            io.BytesIO(audio.getvalue())
-        )
+    # Process audio only once
+    if audio_hash != st.session_state.processed_audio:
 
-        with audio_file as source:
+        st.session_state.processed_audio = audio_hash
 
-            audio_data = recognizer.record(source)
+        try:
 
-        if language == "English":
-            speech_language = "en-IN"
+            recognizer = sr.Recognizer()
 
-        elif language == "Hindi":
-            speech_language = "hi-IN"
+            audio_file = sr.AudioFile(
+                io.BytesIO(audio_bytes)
+            )
 
-        else:
-            speech_language = "gu-IN"
+            with audio_file as source:
+                audio_data = recognizer.record(source)
 
-        recognized_text = recognizer.recognize_google(
-            audio_data,
-            language=speech_language
-        )
+            if language == "English":
+                speech_language = "en-IN"
 
-        st.success("Speech recognized successfully!")
+            elif language == "Hindi":
+                speech_language = "hi-IN"
 
-        st.write("Your question:")
-        st.write(recognized_text)
+            else:
+                speech_language = "gu-IN"
 
-        st.session_state.voice_question = recognized_text
+            with st.spinner("🎤 Understanding your voice..."):
 
-    except sr.UnknownValueError:
+                recognized_text = recognizer.recognize_google(
+                    audio_data,
+                    language=speech_language
+                )
 
-        st.error("Sorry, I could not understand your voice.")
+            st.success("Voice recognized!")
 
-    except sr.RequestError:
+            st.write("Your question:")
+            st.write(recognized_text)
 
-        st.error("Speech recognition service is unavailable.")
+            st.session_state.voice_question = recognized_text
 
-    except Exception as e:
+        except sr.UnknownValueError:
 
-        st.error(f"Voice error: {e}")
+            st.error("Sorry, I couldn't understand your voice.")
+
+        except sr.RequestError:
+
+            st.error("Speech recognition service is unavailable.")
+
+        except Exception as e:
+
+            st.error(f"Voice error: {e}")
 
 # ---------------- TEXT INPUT ----------------
 
-question = st.chat_input(
-    "Ask me anything..."
-)
+question = st.chat_input("Ask me anything...")
 
-# Voice question if available
-
-if "voice_question" in st.session_state:
+# Use voice question if available
+if st.session_state.voice_question:
 
     question = st.session_state.voice_question
 
-    del st.session_state.voice_question
+    st.session_state.voice_question = None
 
 # ---------------- AI RESPONSE ----------------
 
 if question:
 
-    # Display user message
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": question
-        }
-    )
+    # Save user message
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question
+    })
 
     with st.chat_message("user"):
-
         st.markdown(question)
 
-    # AI response
+    # Keep only recent messages to reduce processing
+    recent_messages = st.session_state.messages[-8:]
 
     with st.chat_message("assistant"):
 
@@ -185,7 +185,6 @@ if question:
             try:
 
                 response = ollama.chat(
-
                     model=model_name,
 
                     messages=[
@@ -193,29 +192,30 @@ if question:
                             "role": "system",
                             "content": system_prompt
                         }
-                    ] + st.session_state.messages,
+                    ] + recent_messages,
 
+                    options={
+                        "temperature": 0.3,
+                        "num_predict": 256
+                    }
                 )
 
                 answer = response["message"]["content"]
 
                 st.markdown(answer)
 
-                # Save assistant response
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer
-                    }
-                )
+                # Save AI response
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer
+                })
 
             except Exception as e:
 
                 st.error(
                     "Unable to connect to Ollama. "
-                    "Make sure Ollama is running and "
-                    "the selected model is installed."
+                    "Check whether Ollama is running "
+                    "and whether the selected model is installed."
                 )
 
                 st.code(str(e))
